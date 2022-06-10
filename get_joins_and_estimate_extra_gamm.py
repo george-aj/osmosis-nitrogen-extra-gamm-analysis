@@ -143,10 +143,10 @@ def run():
     with ThreadPoolExecutor(max_workers=20) as executor:
         for result in executor.map(get_block_and_filter, blocks):
             if len(result[0]) > 0:
-                join_rows += result[0]
+                join_rows.extend(result[0])
 
             if len(result[1]) > 0:
-                exit_rows += result[1]
+                exit_rows.extend(result[1])
 
     if join_rows is not None and len(join_rows) > 0:
         write_rows(join_rows, 'osmosis_joins.csv')
