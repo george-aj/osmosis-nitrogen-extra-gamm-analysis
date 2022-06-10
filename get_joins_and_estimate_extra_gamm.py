@@ -168,6 +168,7 @@ def get_share_out_min_amount(denom, amount, total_shares, pool_assets, total_wei
             return calc_share_out_amount(user_token_in=int(amount * weight_percent),
                                          pool_total_shares=int(total_shares),
                                          pool_token_amount=int(asset.get('token').get('amount')))
+
 def _send_abci_query(request_msg: object, path: Text, response_msg: object, height: int) -> Mapping[Text, Any]:
     """Encode and send pre-filled protobuf msg to RPC endpoint."""
     # Some queries have no data to pass.
