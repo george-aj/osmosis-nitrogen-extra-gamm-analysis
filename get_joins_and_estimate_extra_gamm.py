@@ -7,6 +7,7 @@ from time import sleep
 from typing import Text, Mapping, Any
 
 import requests
+import cosmpy.protos.osmosis.gamm.pool_models.balancer.balancerPool_pb2
 import cosmpy.protos.osmosis.gamm.v1beta1.query_pb2 as query_gamms
 from google.protobuf.json_format import MessageToDict
 
@@ -19,7 +20,7 @@ start_height = 4707301
 halt_height = 4713064
 
 file_path = 'C:\\'
-#Use a node that's not too pruned
+#Use a node that isn't too pruned
 node_ip = 'NODE_IP'
 
 def parse_log(log, event_type, attribute_type):
@@ -138,8 +139,8 @@ def write_rows(rows, file_name):
 
 def run():
     blocks = []
-    join_rows = []
-    exit_rows = []
+    join_rows = [['block','code','msg_type','sender','pool_id','share_out','denom_1','amount_1','denom_2','amount_2']]
+    exit_rows = [['block','code','msg_type','sender','pool_id','share_in','denom_1','amount_1','denom_2','amount_2','denom_3','amount_3','denom_4','amount_4']]
 
     for i in range(start_height, halt_height + 1):
         blocks.append(i)
@@ -153,9 +154,9 @@ def run():
                 exit_rows.extend(result[1])
 
     if join_rows is not None and len(join_rows) > 0:
-        write_rows(join_rows, 'osmosis_joins.csv')
+        write_rows(join_rows, file_path + 'osmosis_joins.csv')
     if exit_rows is not None and len(exit_rows) > 0:
-        write_rows(exit_rows, 'osmosis_exits.csv')
+        write_rows(exit_rows, file_path + 'osmosis_exits.csv')
 
 def calc_share_out_amount(user_token_in, pool_total_shares, pool_token_amount):
     return int(float('{:f}'.format(user_token_in * pool_total_shares / pool_token_amount)))
