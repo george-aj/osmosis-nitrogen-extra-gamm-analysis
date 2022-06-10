@@ -1,10 +1,14 @@
+import base64
+import codecs
 import csv
 import json
 from concurrent.futures import ThreadPoolExecutor
 from time import sleep
+from typing import Text, Mapping, Any
 
 import requests
 import cosmpy.protos.osmosis.gamm.v1beta1.query_pb2 as query_gamms
+from google.protobuf.json_format import MessageToDict
 
 msg_join = '/osmosis.gamm.v1beta1.MsgJoinPool'
 msg_exit = '/osmosis.gamm.v1beta1.MsgExitPool'
@@ -15,8 +19,8 @@ start_height = 4707301
 halt_height = 4713064
 
 file_path = 'C:\\'
-#Should not too pruned of a node
-node_ip = 'IP_ADDRESS_OF_NODE'
+#Use a node that's not too pruned
+node_ip = 'NODE_IP'
 
 def parse_log(log, event_type, attribute_type):
     value = None
@@ -164,7 +168,34 @@ def get_share_out_min_amount(denom, amount, total_shares, pool_assets, total_wei
             return calc_share_out_amount(user_token_in=int(amount * weight_percent),
                                          pool_total_shares=int(total_shares),
                                          pool_token_amount=int(asset.get('token').get('amount')))
+def _send_abci_query(request_msg: object, path: Text, response_msg: object, height: int) -> Mapping[Text, Any]:
+    """Encode and send pre-filled protobuf msg to RPC endpoint."""
+    # Some queries have no data to pass.
+    if request_msg:
+        request_msg = codecs.encode(request_msg.SerializeToString(), 'hex')
+        request_msg = str(request_msg, 'utf-8')
 
+
+    req = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "abci_query",
+        "params": {
+            "height": str(height),
+            "path": path,
+            "data": request_msg
+        }
+    }
+    req = json.dumps(req)
+    response = requests.post('http://' + node_ip + ':26657', req).json()
+    if 'result' not in response:
+        print(response)
+    response = response['result']['response']['value']
+    response = base64.b64decode(response)
+    result = response_msg()
+    result.ParseFromString(response)
+    result = MessageToDict(result)
+    return result
 
 def get_pool_data(height):
     print(str(height))
@@ -254,3 +285,5 @@ for row in join_rows:
     rows.append(temp_row)
 
 write_rows(rows, file_path + 'osmosis_join_extra_gamm_estimate.csv')
+
+print()
