@@ -17,3 +17,6 @@ Dirty Exits are ones that a join was detected within the start and halt heights.
 --- Log ---
 
 shadow_pool_changes.csv contains all changes made to the pool as each tx was processed.
+Columns where was_exit_clean = 0 and pool_adjustment_amount_1 and pool_adjustment_amount_2 is how much extra someone got as a result of a join that gave extra gamm. 
+
+
