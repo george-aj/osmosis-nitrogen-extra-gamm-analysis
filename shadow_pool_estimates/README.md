@@ -10,7 +10,7 @@ I included all the files you should need to be able to run it, even if you don't
 
 --- Exit Types ---
 
-Clean Exits are ones that either have no join detected or the pool had no joins period. If a user has no join detected that means they didn't get any extra gamm.
+Clean Exits are ones that either have no join detected between the start and halth height or the pool had no joins period. If a user has no join detected that means they didn't get any extra gamm.
 
 Dirty Exits are ones that a join was detected within the start and halt heights.
 
