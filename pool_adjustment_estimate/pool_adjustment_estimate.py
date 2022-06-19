@@ -44,36 +44,42 @@ def parse_gamm_estimates():
     return gamm_estimates_map
 
 
-def calculate_airdrop_amount(sender, sender_lock_map, airdrop_amount_map, gamm_total_share_map, gamm_estimates_map):
+def calculate_airdrop_amount(sender, sender_gamm_map, airdrop_amount_map, gamm_total_share_map, gamm_estimates_map, validation_map):
     sender_airdrop_map = airdrop_amount_map.get(sender) or {}
 
-    for pool_denom in sender_lock_map.keys():
+    excluded_sender = 'osmo1njty28rqtpw6n59sjj4esw76enp4mg6g7cwrhc'
+
+    if sender == excluded_sender:
+        return
+
+    for pool_denom in sender_gamm_map.keys():
         pool_id = pool_denom.replace('gamm/pool/', '')
-        sender_gamm_amount = sender_lock_map.get(pool_denom)
+        sender_gamm_amount = sender_gamm_map.get(pool_denom)
         pool_ownership = sender_gamm_amount / gamm_total_share_map.get(pool_denom)
 
         # only need to calculate airdrop amount if pool was impacted
         if pool_id in gamm_estimates_map:
-            coin_map = gamm_estimates_map.get(pool_id)
+            #validate all ownership amounts add up to 100%
+            pool_percent_reimbursed = validation_map.get(pool_id) or 0
+            pool_percent_reimbursed += pool_ownership
+            validation_map.update({pool_id: pool_percent_reimbursed})
 
-            if coin_map is None:
-                print()
+            coin_map = gamm_estimates_map.get(pool_id)
 
             for denom in coin_map:
                 amount = coin_map.get(denom)
-                airdrop_amount = pool_ownership * amount
+                previous_airdrop_amount = sender_airdrop_map.get(denom) or 0
+                previous_airdrop_amount += pool_ownership * amount
 
-                sender_airdrop_map.update({denom: airdrop_amount})
+                sender_airdrop_map.update({denom: previous_airdrop_amount})
                 airdrop_amount_map.update({sender: sender_airdrop_map})
 
 def run_airdrop_estimate():
     # read in over issued gamm estimates for all joins and reduce by pool_id
     gamm_estimates_map = parse_gamm_estimates()
 
-    print()
-    
     #open and load a state export
-    f = open('state_export_halt_height_4713064.json', 'r+', encoding='utf-8')
+    f = open('state_export_upgrade_height_4707300.json', 'r+', encoding='utf-8')
     j = json.loads(f.read())
     f.close()
 
@@ -118,16 +124,26 @@ def run_airdrop_estimate():
 
     #calculate airdrop amount for locked/bonded gamm
     airdrop_amount_map = {}
-    max_coins = 0
+    validation_map = {}
     for sender in lock_map.keys():
-        calculate_airdrop_amount(sender, lock_map.get(sender), airdrop_amount_map, gamm_total_share_map, gamm_estimates_map)
+        calculate_airdrop_amount(sender, lock_map.get(sender), airdrop_amount_map, gamm_total_share_map, gamm_estimates_map, validation_map)
+
+        if sender in balance_map:
+            print(sender)
+            print(lock_map.get(sender))
+            print(balance_map.get(sender))
 
     # calculate airdrop amount for un-locked/un-bonded gamm
     for sender in balance_map.keys():
-        calculate_airdrop_amount(sender, balance_map.get(sender), airdrop_amount_map, gamm_total_share_map, gamm_estimates_map)
+        calculate_airdrop_amount(sender, balance_map.get(sender), airdrop_amount_map, gamm_total_share_map, gamm_estimates_map, validation_map)
+
+        if sender in lock_map:
+            print(sender)
+            print(lock_map.get(sender))
+            print(balance_map.get(sender))
 
     #write to file
-    with open('osmosis_airdrop.csv', "w", newline="") as f:
+    with open('osmosis_airdrop_upgrade.csv', "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(['sender', 'denom', 'amount'])
 
