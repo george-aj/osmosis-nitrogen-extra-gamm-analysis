@@ -47,8 +47,8 @@ def parse_gamm_estimates():
 def calculate_airdrop_amount(sender, sender_gamm_map, airdrop_amount_map, gamm_total_share_map, gamm_estimates_map, validation_map):
     sender_airdrop_map = airdrop_amount_map.get(sender) or {}
 
+    #Unknown account that owns gamm that throws off all the numbers
     excluded_sender = 'osmo1njty28rqtpw6n59sjj4esw76enp4mg6g7cwrhc'
-
     if sender == excluded_sender:
         return
 
