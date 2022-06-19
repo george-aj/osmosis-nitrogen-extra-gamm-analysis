@@ -1,6 +1,6 @@
 --- Methodology ---
 
-Export state as of halt heigh 4713064
+Export state as of the upgrade heigh 4707300
 Parse state and get all locked/bonded and un-locked/un-bonded gamm
 Use previously calculated estimates of how much extra tokens were issued on joins
 Join the three data sets together to produce the data in osmosis_airdrop.csv
