@@ -24,7 +24,7 @@ halt_height = 4713064
 
 file_path = 'C:\\Users\\admin\\Documents\\GitHub\\osmosis-nitrogen-extra-gamm-analysis\\'
 # Use a node that isn't too pruned
-node_ip = '142.132.157.153'
+node_ip = 'NODE_IP'
 
 
 def parse_log(log, event_type, attribute_type):
