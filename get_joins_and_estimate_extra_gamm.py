@@ -5,6 +5,9 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from time import sleep
 from typing import Text, Mapping, Any
+from copy import deepcopy
+
+import httplib2
 
 import requests
 import cosmpy.protos.osmosis.gamm.pool_models.balancer.balancerPool_pb2
@@ -13,15 +16,16 @@ from google.protobuf.json_format import MessageToDict
 
 msg_join = '/osmosis.gamm.v1beta1.MsgJoinPool'
 msg_exit = '/osmosis.gamm.v1beta1.MsgExitPool'
-
-valid_tx_types = [msg_join, msg_exit]
+msg_swap = '/osmosis.gamm.v1beta1.MsgSwapExactAmountIn'
+msg_single = '/osmosis.gamm.v1beta1.MsgJoinSwapExternAmountIn'
 
 start_height = 4707301
 halt_height = 4713064
 
-file_path = 'C:\\'
-#Use a node that isn't too pruned
-node_ip = 'NODE_IP'
+file_path = 'C:\\Users\\admin\\Documents\\GitHub\\osmosis-nitrogen-extra-gamm-analysis\\'
+# Use a node that isn't too pruned
+node_ip = '142.132.157.153'
+
 
 def parse_log(log, event_type, attribute_type):
     value = None
@@ -32,6 +36,7 @@ def parse_log(log, event_type, attribute_type):
                     value = attribute.get('value')
 
     return value
+
 
 def parse_coin(coin):
     if 'uosmo' in coin:
@@ -47,31 +52,32 @@ def parse_coin(coin):
 
     return denom, amount
 
-def get_block_and_filter(block_height):
-    # unstable
-    # grpc = 'http://' + node_ip + ':1317/cosmos/tx/v1beta1/txs?events=tx.height={BLOCK_HEIGHT}&pagination.limit=10000'.replace('{BLOCK_HEIGHT}', str(block_height))
 
+def get_block_and_filter(block_height):
     block_url = 'http://' + node_ip + ':26657/block_results?height=' + str(block_height)
 
     i = 0
     while True:
         try:
             i += 1
-            #Block 4707635 fails to get, but there are no join or exits in the block: https://www.mintscan.io/osmosis/blocks/4707635
+
+            # Block 4707635 fails to get
             block = requests.get(block_url, timeout=120, stream=True).json()
 
             break
         except Exception as e:
-            print("Call Failed: " + str(block_height))
-            print(str(e))
             sleep(5)
 
             if i > 10:
                 print("Failed to get block: " + str(block_height))
-                return [[], []]
+                print(str(e))
+                return [[], [], [], []]
 
     join_rows = []
     exit_rows = []
+    swap_rows = []
+    single_rows = []
+
     if block is not None \
             and 'result' in block \
             and 'txs_results' in block.get('result') \
@@ -125,27 +131,82 @@ def get_block_and_filter(block_height):
                         row.append(amount)
 
                     exit_rows.append(row)
+                elif msg_type == msg_swap:
+                    #split each token swap into its own row
+                    for item in log:
+                        if item.get('type') == 'token_swapped':
+                            j = 0
+                            row_temp = deepcopy(row)
+
+                            for attributes in item.get('attributes'):
+                                key = attributes.get('key')
+                                value = attributes.get('value')
+
+                                if key == 'sender':
+                                    row_temp.append(value)
+                                    j += 1
+
+                                if key == 'pool_id':
+                                    row_temp.append(value)
+                                    j += 1
+
+                                if key == 'tokens_in':
+                                    denom, amount = parse_coin(value)
+                                    row_temp.append(denom)
+                                    row_temp.append(amount)
+                                    j += 1
+
+                                if key == 'tokens_out':
+                                    denom, amount = parse_coin(value)
+                                    row_temp.append(denom)
+                                    row_temp.append(amount)
+                                    j += 1
+
+                                if j == 4:
+                                    swap_rows.append(row_temp)
+                                    row_temp = deepcopy(row)
+                                    j = 0
+                elif msg_type == msg_single:
+                    row.append(parse_log(log, 'pool_joined', 'sender'))
+                    row.append(parse_log(log, 'pool_joined', 'pool_id'))
+
+                    denom_in, amount_in = parse_coin(parse_log(log, 'pool_joined', 'tokens_in'))
+
+                    gamm_out = parse_log(log, 'coinbase', 'amount')
+
+                    denom_out = gamm_out[gamm_out.find('gamm/pool/'):]
+                    amount_out = gamm_out[:gamm_out.find('gamm/pool/')]
+
+                    row.append(denom_in)
+                    row.append(amount_in)
+                    row.append(denom_out)
+                    row.append(amount_out)
+
+                    single_rows.append(row)
 
                 c += 1
 
-    return join_rows, exit_rows
+    return join_rows, exit_rows, swap_rows, single_rows
 
 
 def write_rows(rows, file_name):
-    with open(file_name, "a", newline="") as f:
+    with open(file_name, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(rows)
 
 
 def run():
     blocks = []
-    join_rows = [['block','code','msg_type','sender','pool_id','share_out','denom_1','amount_1','denom_2','amount_2']]
-    exit_rows = [['block','code','msg_type','sender','pool_id','share_in','denom_1','amount_1','denom_2','amount_2','denom_3','amount_3','denom_4','amount_4']]
+    join_rows = [['block', 'code', 'msg_type', 'sender', 'pool_id', 'share_out', 'denom_1', 'amount_1', 'denom_2', 'amount_2']]
+    exit_rows = [['block', 'code', 'msg_type', 'sender', 'pool_id', 'share_in', 'denom_1', 'amount_1', 'denom_2', 'amount_2', 'denom_3', 'amount_3', 'denom_4', 'amount_4']]
+    swap_rows = [['block', 'code', 'msg_type', 'sender', 'pool_id', 'denom_in', 'amount_in', 'denom_out', 'amount_out']]
+    single_rows = [['block', 'code', 'msg_type', 'sender', 'pool_id', 'denom_in', 'amount_in', 'denom_out', 'amount_out']]
 
     for i in range(start_height, halt_height + 1):
         blocks.append(i)
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    # If using a public node consider lowering this
+    with ThreadPoolExecutor(max_workers=25) as executor:
         for result in executor.map(get_block_and_filter, blocks):
             if len(result[0]) > 0:
                 join_rows.extend(result[0])
@@ -153,10 +214,24 @@ def run():
             if len(result[1]) > 0:
                 exit_rows.extend(result[1])
 
+            if len(result[2]) > 0:
+                swap_rows += result[2]
+
+            if len(result[3]) > 0:
+                single_rows += result[3]
+
     if join_rows is not None and len(join_rows) > 0:
         write_rows(join_rows, file_path + 'osmosis_joins.csv')
+
     if exit_rows is not None and len(exit_rows) > 0:
         write_rows(exit_rows, file_path + 'osmosis_exits.csv')
+
+    if swap_rows is not None and len(swap_rows) > 0:
+        write_rows(swap_rows, 'osmosis_swaps.csv')
+
+    if single_rows is not None and len(single_rows) > 0:
+        write_rows(single_rows, 'osmosis_single_asset.csv')
+
 
 def calc_share_out_amount(user_token_in, pool_total_shares, pool_token_amount):
     return int(float('{:f}'.format(user_token_in * pool_total_shares / pool_token_amount)))
@@ -170,13 +245,13 @@ def get_share_out_min_amount(denom, amount, total_shares, pool_assets, total_wei
                                          pool_total_shares=int(total_shares),
                                          pool_token_amount=int(asset.get('token').get('amount')))
 
+
 def _send_abci_query(request_msg: object, path: Text, response_msg: object, height: int) -> Mapping[Text, Any]:
     """Encode and send pre-filled protobuf msg to RPC endpoint."""
     # Some queries have no data to pass.
     if request_msg:
         request_msg = codecs.encode(request_msg.SerializeToString(), 'hex')
         request_msg = str(request_msg, 'utf-8')
-
 
     req = {
         "jsonrpc": "2.0",
@@ -198,6 +273,7 @@ def _send_abci_query(request_msg: object, path: Text, response_msg: object, heig
     result.ParseFromString(response)
     result = MessageToDict(result)
     return result
+
 
 def get_pool_data(height):
     print(str(height))
@@ -222,7 +298,8 @@ def get_pool_data(height):
 
     return [height, pool_map]
 
-#comment out once you have a copy of osmosis_joins.csv, only need to download this once
+
+# comment out once you have a copy of osmosis_joins.csv, only need to download this once
 run()
 
 join_rows = []
@@ -274,7 +351,7 @@ for row in join_rows:
 
     recorded_share_out = int(row.get('share_out'))
 
-    ratio = (recorded_share_out/(denom_1_share_out + denom_2_share_out)) - 1
+    ratio = (recorded_share_out / (denom_1_share_out + denom_2_share_out)) - 1
 
     print(str(denom_1_share_out) + ', ' + str(denom_2_share_out) + ', ' + str(recorded_share_out) + ', ' + str(ratio))
     temp_row = []

@@ -7,13 +7,14 @@ from copy import copy, deepcopy
 from statistics import median, mean
 from time import sleep
 from typing import Text, Mapping, Any
+from collections import OrderedDict
 
 import cosmpy.protos.osmosis.gamm.pool_models.balancer.balancerPool_pb2
 import cosmpy.protos.osmosis.gamm.v1beta1.query_pb2 as query_gamms
 import requests
 from google.protobuf.json_format import MessageToDict
 
-file_path = 'C:\\Users\\admin\\Google Drive\\Osmosis v9\\'
+#should use an archive node
 node_ip = 'NODE_IP'
 
 start_height = 4707301
@@ -21,8 +22,10 @@ halt_height = 4713064
 
 msg_join = '/osmosis.gamm.v1beta1.MsgJoinPool'
 msg_exit = '/osmosis.gamm.v1beta1.MsgExitPool'
+msg_swap = '/osmosis.gamm.v1beta1.MsgSwapExactAmountIn'
+msg_single = '/osmosis.gamm.v1beta1.MsgJoinSwapExternAmountIn'
 
-#If running for the first time set to true, thenk once you have all the CSV files you can set it to false so it doesn't keep fetching the data
+#If running for the first time set to true, then once you have all the CSV files you can set it to false so it doesn't keep fetching the data
 first_load = False
 
 def make_keyed_map(row_list):
@@ -104,25 +107,6 @@ def calc_token_out_amounts(pool_data, share_in):
 
     return token_list
 
-#Not accurate
-def estimate_no_match_amounts_againts_upgrade_height(no_match_list, pool_map):
-    no_match_amounts = [
-        ['sender', 'denom_1', 'amount_1', 'denom_2', 'amount_2', 'denom_3', 'amount_3', 'denom_4', 'amount_4']]
-    c = 0
-    for row in no_match_list:
-        new_row = []
-        pool_data = pool_map.get(row.get('pool_id'))
-
-        new_row.append(row.get('sender'))
-        tokens = calc_token_out_amounts(pool_data, row.get('share_in'))
-
-        for token in tokens:
-            new_row.append(token)
-
-        no_match_amounts.append(new_row)
-
-    write_rows(no_match_amounts, file_path + "osmosis_no_match_amount_at_upgrade_height.csv")
-
 def get_pool_data(height):
     request_msg = query_gamms.QueryPoolsRequest()
     request_msg.pagination.limit = 10000
@@ -160,9 +144,8 @@ def get_share_out_min_amount(denom, amount, total_shares, pool_assets, total_wei
                                          pool_total_shares=int(total_shares),
                                          pool_token_amount=int(asset.get('token').get('amount')))
 
-def calc_share_out_on_join(row, pool_data):
-    height = int(row.get('block'))
 
+def calc_share_out_on_join(row, pool_data):
     denom_1 = row.get('denom_1')
     denom_2 = row.get('denom_2')
 
@@ -180,13 +163,21 @@ def calc_share_out_on_join(row, pool_data):
 
     return share_out_estimate
 
-join_rows = read_file(file_path + 'osmosis_joins.csv')
+
+def add_to_map(row, map_to_update):
+    height = row.get('block')
+    msg_list = map_to_update.get(height) or []
+    msg_list.append(row)
+    map_to_update.update({height: msg_list})
+
+join_rows = read_file('../osmosis_joins.csv')
+exit_rows = read_file('../osmosis_exits.csv')
+swap_rows = read_file('../osmosis_swaps.csv')
+single_rows = read_file('../osmosis_single_asset.csv')
 
 join_pool_set = set()
 for row in join_rows:
     join_pool_set.add(row.get('pool_id'))
-
-exit_rows = read_file(file_path + 'osmosis_exits.csv')
 
 exit_pool_set = set()
 for row in exit_rows:
@@ -218,15 +209,15 @@ if first_load:
             else:
                 impacted_exits.append(row.values())
 
-    write_rows(match_list, file_path + "osmosis_exit_match_join.csv")
-    write_rows(no_match_list, file_path + "osmosis_exit_do_not_match_join.csv")
-    write_rows(not_impacted_exits, file_path + "osmosis_not_impacted_exits.csv")
-    write_rows(impacted_exits, file_path + "osmosis_impacted_exits.csv")
+    write_rows(match_list, "osmosis_exit_match_join.csv")
+    write_rows(no_match_list, "osmosis_exit_do_not_match_join.csv")
+    write_rows(not_impacted_exits, "osmosis_not_impacted_exits.csv")
+    write_rows(impacted_exits, "osmosis_impacted_exits.csv")
 else:
-    match_list = read_file(file_path + "osmosis_exit_match_join.csv")
-    no_match_list = read_file(file_path + "osmosis_exit_do_not_match_join.csv")
-    not_impacted_exits = read_file(file_path + "osmosis_not_impacted_exits.csv")
-    impacted_exits = read_file(file_path + "osmosis_impacted_exits.csv")
+    match_list = read_file("osmosis_exit_match_join.csv")
+    no_match_list = read_file("osmosis_exit_do_not_match_join.csv")
+    not_impacted_exits = read_file("osmosis_not_impacted_exits.csv")
+    impacted_exits = read_file("osmosis_impacted_exits.csv")
 
 join_rows_map_by_sender = {}
 
@@ -242,7 +233,7 @@ impacted_but_clean_exits = []
 not_impacted_pool_has_no_joins = []
 exits_with_joins = []
 
-impacted_exits = read_file(file_path + "osmosis_impacted_exits.csv")
+impacted_exits = read_file("osmosis_impacted_exits.csv")
 
 if first_load:
     for exit_row in exit_rows:
@@ -268,27 +259,41 @@ if first_load:
         else:
             exits_with_joins.append(exit_row)
 
-    write_list_of_dicts(impacted_but_clean_exits, file_path + 'impacted_but_clean_exits.csv')
-    write_list_of_dicts(not_impacted_pool_has_no_joins, file_path + 'not_impacted_pool_has_no_joins.csv')
-    write_list_of_dicts(exits_with_joins, file_path + 'exits_with_joins.csv')
+    write_list_of_dicts(impacted_but_clean_exits, 'impacted_but_clean_exits.csv')
+    write_list_of_dicts(not_impacted_pool_has_no_joins, 'not_impacted_pool_has_no_joins.csv')
+    write_list_of_dicts(exits_with_joins, 'exits_with_joins.csv')
 else:
-    impacted_but_clean_exits = read_file(file_path + 'impacted_but_clean_exits.csv')
-    not_impacted_pool_has_no_joins = read_file(file_path + 'not_impacted_pool_has_no_joins.csv')
-    exits_with_joins = read_file(file_path + 'exits_with_joins.csv')
+    impacted_but_clean_exits = read_file('impacted_but_clean_exits.csv')
+    not_impacted_pool_has_no_joins = read_file('not_impacted_pool_has_no_joins.csv')
+    exits_with_joins = read_file('exits_with_joins.csv')
 
 pool_data_map = {}
 
+
+
+#interlace the join, exit, swap and single asset rows and get a set of all heights - 1
 height_set = set()
+per_block_msg_map = {}
 for row in join_rows:
     height_set.add(int(row.get('block')) - 1)
+    add_to_map(row, per_block_msg_map)
 
 for row in exit_rows:
     height_set.add(int(row.get('block')) - 1)
+    add_to_map(row, per_block_msg_map)
+
+for row in swap_rows:
+    height_set.add(int(row.get('block')) - 1)
+    add_to_map(row, per_block_msg_map)
+
+for row in single_rows:
+    height_set.add(int(row.get('block')) - 1)
+    add_to_map(row, per_block_msg_map)
 
 if first_load:
     with ThreadPoolExecutor(max_workers=20) as executor:
         for result in executor.map(get_pool_data, height_set):
-            file = file_path + 'pool_data\\pool_data_at_' + str(result[0]) + '.json'
+            file = '../pool_data/pool_data_at_' + str(result[0]) + '.json'
             if len(result) > 0:
                 with open(file, 'w') as f:
                     json.dump(result[1], f)
@@ -296,25 +301,11 @@ if first_load:
                 pool_data_map.update({result[0]: result[1]})
 else:
     for height in height_set:
-        f = open(file_path + 'pool_data\\pool_data_at_' + str(height) + '.json', 'r+', encoding='utf-8')
+        f = open('../pool_data/pool_data_at_' + str(height) + '.json', 'r+', encoding='utf-8')
         pool_data_map.update({str(height): json.loads(f.read())})
         f.close()
 
-#interlace the join and exit rows
-per_block_msg_map = {}
-for row in join_rows:
-    height = row.get('block')
-    msg_list = per_block_msg_map.get(height) or []
-    msg_list.append(row)
-    per_block_msg_map.update({height: msg_list})
-
-for row in exit_rows:
-    height = row.get('block')
-    msg_list = per_block_msg_map.get(height) or []
-    msg_list.append(row)
-    per_block_msg_map.update({height: msg_list})
-
-estimated_join_gamms = read_file(file_path + 'osmosis_join_extra_gamm_estimate.csv')
+estimated_join_gamms = read_file('../osmosis_join_extra_gamm_estimate.csv')
 
 pool_ratio_avg_map = {}
 extra_amount_ratio_map = {}
@@ -329,11 +320,77 @@ for row in estimated_join_gamms:
 
         pool_ratio_avg_map.update({pool_id: mean(ratio_list)})
 
+if first_load:
+    pool_extra_amount_on_join_map = OrderedDict()
+    joins = [['block', 'sender', 'pool_id', 'msg_type', 'original_pool_shares_previous_height', 'recorded_share_out', 'adjustment_share_out', 'extra_amount_percent']]
+    for row in join_rows:
+        block_height = row.get('block')
+        pool_id = row.get('pool_id')
+        exit_block = row.get('block')
+        exit_sender = row.get('sender')
+        exit_pool_id = row.get('pool_id')
+        msg_type = row.get('msg_type')
+
+        pool_extra_ratio = 1 + (pool_ratio_avg_map.get(pool_id) or 0)
+        pool_extra_amount_on_join = pool_extra_amount_on_join_map.get(block_height) or 0
+        pool_data = pool_data_map.get(str(int(block_height) - 1))
+
+        original_pool_shares_previous_height = int(pool_data.get(pool_id).get('totalShares').get('amount'))
+
+        recorded_share_out = int(row.get('share_out'))
+
+        # amount to decrease total gamm shares
+        adjustment_share_out = recorded_share_out / pool_extra_ratio
+
+        # log
+        if adjustment_share_out > .00000001:
+            join = [exit_block, exit_sender, exit_pool_id, msg_type, original_pool_shares_previous_height, recorded_share_out]
+            join.append('{:f}'.format(adjustment_share_out))
+            join.append((recorded_share_out / (original_pool_shares_previous_height + recorded_share_out)) - (adjustment_share_out / original_pool_shares_previous_height))
+            joins.append(join)
+
+    write_rows(joins, 'joins_relative_extra.csv')
+else:
+    join_relative_extra = read_file('joins_relative_extra.csv')
+
+clean_exits_relative_adjustment = [['block', 'sender', 'msg_type', 'pool_id', 'denom_1', 'original_amount_1', 'adjusted_amount_1', 'denom_2', 'original_amount_2', 'adjusted_amount_2', 'relative_extra_percent']]
+for row in exit_rows:
+    exit_block_height = row.get('block')
+    exit_pool_id = row.get('pool_id')
+
+    relative_extra = 0
+    for join in join_relative_extra:
+        if exit_pool_id == join.get('pool_id') and row not in exits_with_joins:
+            if exit_block_height >= join.get('block'):
+                relative_extra += float(join.get('extra_amount_percent'))
+                print()
+            else:
+                break
+
+    if relative_extra != 0:
+        denom_1 = row.get('denom_1')
+        denom_2 = row.get('denom_2')
+
+        amount_1 = int(row.get('amount_1'))
+        amount_2 = int(row.get('amount_2'))
+
+        #log
+        clean_exits_relative_adjustment.append([exit_block_height, row.get('sender'), row.get('msg_type'), exit_pool_id, denom_1, amount_1, int(amount_1 * relative_extra + 1), denom_2, amount_2, int(amount_2 * relative_extra + 1), relative_extra])
+
+write_rows(clean_exits_relative_adjustment, 'clean_exits_relative_extra.csv')
+
+"""
+shadow pool methodology not working as expected
+
 #build a second set of pool data to allow for estimating actual amounts people should have gotten when they exited pools
 shadow_pool_data_map = {}
 
-#keep a log of changes
-shadow_pool_changes_list = [['block', 'sender', 'pool_id', 'msg_type', 'original_shares', 'share_adjustment', 'new_total_shares', 'was_exit_clean', 'sender_original_amount_1', 'sender_original_amount_2', 'pool_denom_1', 'pool_original_amount_1', 'pool_adjustment_amount_1', 'pool_denom_2', 'pool_original_amount_2', 'pool_adjustment_amount_2', 'adjustment_ratio']]
+#lists for keeping track of changes to pools that should be reimbursed
+clean_exits = [['block', 'sender', 'pool_id', 'msg_type', 'original_shares', 'share_adjustment', 'new_total_shares', 'was_exit_clean', 'sender_original_amount_1', 'sender_original_amount_2', 'pool_denom_1', 'pool_original_amount_1', 'pool_adjustment_amount_1', 'pool_denom_2', 'pool_original_amount_2', 'pool_adjustment_amount_2']]
+dirty_exits = [['block', 'sender', 'pool_id', 'msg_type', 'original_shares', 'share_adjustment', 'new_total_shares', 'was_exit_clean', 'sender_original_amount_1', 'sender_original_amount_2', 'pool_denom_1', 'pool_original_amount_1', 'pool_adjustment_amount_1', 'pool_denom_2', 'pool_original_amount_2', 'pool_adjustment_amount_2', 'adjustment_ratio']]
+joins = [['block', 'sender', 'pool_id', 'msg_type', 'original_shares', 'share_adjustment', 'new_total_shares']]
+swaps = [['block', 'sender', 'pool_id', 'msg_type', 'original_shares', 'denom_1', 'pool_original_amount_1', 'pool_adjustment_amount_1', 'denom_2', 'pool_original_amount_2', 'pool_adjustment_amount_2']]
+singles = [['block', 'sender', 'pool_id', 'msg_type', 'original_shares', 'new_total_shares', 'denom_1', 'pool_original_amount_1', 'pool_adjustment_amount_1', 'denom_2', 'pool_original_amount_2', 'pool_adjustment_amount_2']]
 
 for block in sorted(per_block_msg_map.keys()):
     #get pool data as of the previous block
@@ -349,12 +406,10 @@ for block in sorted(per_block_msg_map.keys()):
         exit_pool_id = row.get('pool_id')
         msg_type = row.get('msg_type')
 
-        #log
-        shadow_pool_change = [exit_block, exit_sender, exit_pool_id]
+
 
         #get actual pool data in case a shadow pool doesn't exist yet
         actual_pool = actual_pool_data.get(exit_pool_id)
-
 
         if exit_pool_id in shadow_pool_data_map:
             shadow_pool = shadow_pool_data_map.get(exit_pool_id)
@@ -364,28 +419,37 @@ for block in sorted(per_block_msg_map.keys()):
         shadow_total_shares_map = shadow_pool.get('totalShares')
         shadow_total_shares_amount = int(shadow_total_shares_map.get('amount'))
 
-        # log
-        shadow_pool_change.append(msg_type)
-        shadow_pool_change.append(deepcopy(shadow_total_shares_amount))
+
 
         if msg_type == msg_join:
+            #log
+            join = [exit_block, exit_sender, exit_pool_id]
+            join.append(msg_type)
+            join.append(deepcopy(shadow_total_shares_amount))
+
             recorded_share_out = int(row.get('share_out'))
             estimate_share_out = calc_share_out_on_join(row, shadow_pool)
 
             #amount to decrease total gamm shares
-            gamm_adjustment = recorded_share_out + estimate_share_out
+            gamm_adjustment = recorded_share_out - estimate_share_out
 
             # adjust shadow pool by decreasing the gamm share amount that was issued by the extra amount on join
             shadow_total_shares_amount -= gamm_adjustment
 
             #log
-            shadow_pool_change.append(gamm_adjustment)
-            shadow_pool_change.append(deepcopy(shadow_total_shares_amount))
-        else:
+            join.append(gamm_adjustment)
+            join.append(deepcopy(shadow_total_shares_amount))
+            joins.append(join)
+        elif msg_type == msg_exit:
             recorded_share_in = int(row.get('share_in'))
 
-            #if exit does not have a corresponding join or it's unimpacted pool remove gamm shares and pool assets with no adjustment
-            if row in impacted_but_clean_exits or row in not_impacted_pool_has_no_joins:
+            #if exit does not have a corresponding join
+            if row in impacted_but_clean_exits:
+                #log
+                clean_exit = [exit_block, exit_sender, exit_pool_id]
+                clean_exit.append(msg_type)
+                clean_exit.append(deepcopy(shadow_total_shares_amount))
+
                 sender_share_of_pool = recorded_share_in / shadow_total_shares_amount
 
                 shadow_total_shares_amount -= recorded_share_in
@@ -397,11 +461,11 @@ for block in sorted(per_block_msg_map.keys()):
                 amount_2 = int(row.get('amount_2'))
 
                 # log
-                shadow_pool_change.append(recorded_share_in)
-                shadow_pool_change.append(deepcopy(shadow_total_shares_amount))
-                shadow_pool_change.append(1)
-                shadow_pool_change.append(amount_1)
-                shadow_pool_change.append(amount_2)
+                clean_exit.append(recorded_share_in)
+                clean_exit.append(deepcopy(shadow_total_shares_amount))
+                clean_exit.append(1)
+                clean_exit.append(amount_1)
+                clean_exit.append(amount_2)
 
                 token_list = shadow_pool.get('poolAssets')
 
@@ -411,8 +475,8 @@ for block in sorted(per_block_msg_map.keys()):
                     denom = token_map.get('denom')
 
                     #log
-                    shadow_pool_change.append(denom)
-                    shadow_pool_change.append(deepcopy(shadow_pool_token_amount))
+                    clean_exit.append(denom)
+                    clean_exit.append(deepcopy(shadow_pool_token_amount))
 
                     if denom == denom_1:
                         amount_1 = int(sender_share_of_pool * shadow_pool_token_amount)
@@ -420,7 +484,7 @@ for block in sorted(per_block_msg_map.keys()):
                         token_map.update({'amount': str(shadow_pool_token_amount)})
 
                         #log
-                        shadow_pool_change.append(amount_1)
+                        clean_exit.append(amount_1)
 
                     if denom == denom_2:
                         amount_2 = int(sender_share_of_pool * shadow_pool_token_amount)
@@ -428,15 +492,21 @@ for block in sorted(per_block_msg_map.keys()):
                         token_map.update({'amount': str(shadow_pool_token_amount)})
 
                         #log
-                        shadow_pool_change.append(amount_2)
+                        clean_exit.append(amount_2)
 
                     token.update({'token': token_map})
 
                 shadow_pool.update({'poolAssets': token_list})
+                clean_exits.append(deepcopy(clean_exit))
 
             #if exit does have a corresponding join remove their gamm shares with no adjustment
             #and pool assets with an adjustment of the extra amount they got, add back ill-gotten assets back into the pool
-            else:
+            elif row in exits_with_joins:
+                #log
+                dirty_exit = [exit_block, exit_sender, exit_pool_id]
+                dirty_exit.append(msg_type)
+                dirty_exit.append(deepcopy(shadow_total_shares_amount))
+
                 pool_extra_ratio = 1 + pool_ratio_avg_map.get(row.get('pool_id'))
 
                 adjustment_gamm = int(float('{:f}'.format(recorded_share_in / pool_extra_ratio)))
@@ -450,11 +520,11 @@ for block in sorted(per_block_msg_map.keys()):
                 amount_2 = int(row.get('amount_2'))
 
                 # log
-                shadow_pool_change.append(deepcopy(adjustment_gamm))
-                shadow_pool_change.append(deepcopy(shadow_total_shares_amount))
-                shadow_pool_change.append(0)
-                shadow_pool_change.append(amount_1)
-                shadow_pool_change.append(amount_2)
+                dirty_exit.append(deepcopy(adjustment_gamm))
+                dirty_exit.append(deepcopy(shadow_total_shares_amount))
+                dirty_exit.append(0)
+                dirty_exit.append(amount_1)
+                dirty_exit.append(amount_2)
 
                 token_list = shadow_pool.get('poolAssets')
 
@@ -464,8 +534,8 @@ for block in sorted(per_block_msg_map.keys()):
                     denom = token_map.get('denom')
 
                     # log
-                    shadow_pool_change.append(denom)
-                    shadow_pool_change.append(deepcopy(shadow_pool_token_amount))
+                    dirty_exit.append(denom)
+                    dirty_exit.append(deepcopy(shadow_pool_token_amount))
 
                     if denom == denom_1:
                         adjustment_amount = amount_1 - int(amount_1 / pool_extra_ratio)
@@ -473,7 +543,7 @@ for block in sorted(per_block_msg_map.keys()):
                         token_map.update({'amount': str(shadow_pool_token_amount)})
 
                         # log
-                        shadow_pool_change.append(adjustment_amount)
+                        dirty_exit.append(adjustment_amount)
 
                     if denom == denom_2:
                         adjustment_amount = amount_2 - int(amount_2 / pool_extra_ratio)
@@ -481,24 +551,88 @@ for block in sorted(per_block_msg_map.keys()):
                         token_map.update({'amount': str(shadow_pool_token_amount)})
 
                         # log
-                        shadow_pool_change.append(adjustment_amount)
+                        dirty_exit.append(adjustment_amount)
 
                     token.update({'token': token_map})
 
                 shadow_pool.update({'poolAssets': token_list})
 
                 #log
-                shadow_pool_change.append(pool_extra_ratio)
+                dirty_exit.append(pool_extra_ratio)
+                dirty_exits.append(dirty_exit)
+        elif msg_type == msg_swap:
+            #log
+            swap = [exit_block, exit_sender, exit_pool_id]
+            swap.append(msg_type)
+            swap.append(deepcopy(shadow_total_shares_amount))
 
+            token_list = shadow_pool.get('poolAssets')
+
+            for token in token_list:
+                token_map = token.get('token')
+                shadow_pool_token_amount = int(token_map.get('amount'))
+                denom = token_map.get('denom')
+
+                swap.append(denom)
+                swap.append(deepcopy(shadow_pool_token_amount))
+
+                if denom == row.get('denom_in'):
+                    shadow_pool_token_amount += int(row.get('amount_in'))
+                    token_map.update({'amount': str(shadow_pool_token_amount)})
+
+                if denom == row.get('denom_out'):
+                    shadow_pool_token_amount -= int(row.get('amount_out'))
+                    token_map.update({'amount': str(shadow_pool_token_amount)})
+
+                swap.append(deepcopy(shadow_pool_token_amount))
+
+            token.update({'token': token_map})
+
+            shadow_pool.update({'poolAssets': token_list})
+            swaps.append(swap)
+        elif msg_type == msg_single:
+            #log
+            single = [exit_block, exit_sender, exit_pool_id]
+            single.append(msg_type)
+            single.append(deepcopy(shadow_total_shares_amount))
+
+            token_list = shadow_pool.get('poolAssets')
+            shadow_total_shares_amount += int(row.get('amount_out'))
+
+            #log
+            single.append(deepcopy(shadow_total_shares_amount))
+
+            for token in token_list:
+                token_map = token.get('token')
+                shadow_pool_token_amount = int(token_map.get('amount'))
+                denom = token_map.get('denom')
+
+                single.append(denom)
+                single.append(deepcopy(shadow_pool_token_amount))
+
+                if denom == row.get('denom_in'):
+                    shadow_pool_token_amount += int(row.get('amount_in'))
+                    token_map.update({'amount': str(shadow_pool_token_amount)})
+
+                    token.update({'token': token_map})
+
+                single.append(deepcopy(shadow_pool_token_amount))
+
+            shadow_pool.update({'poolAssets': token_list})
+            singles.append(single)
         shadow_total_shares_map.update({'amount': str(shadow_total_shares_amount)})
         shadow_pool.update({'totalShares': shadow_total_shares_map})
 
         shadow_pool_data_map.update({exit_pool_id: shadow_pool})
 
-        shadow_pool_changes_list.append(shadow_pool_change)
-
 for shadow_pool_id in shadow_pool_data_map.keys():
-    with open(file_path + 'shadow_pool_data\\pools\\' + shadow_pool_id + '.json', 'w') as f:
+    with open('shadow_pools/' + shadow_pool_id + '.json', 'w') as f:
         json.dump(shadow_pool_data_map.get(shadow_pool_id), f)
 
-write_rows(shadow_pool_changes_list, file_path + 'shadow_pool_data\\shadow_pool_changes.csv')
+write_rows(clean_exits, 'clean_exits.csv')
+write_rows(dirty_exits, 'dirty_exits.csv')
+write_rows(joins, 'joins.csv')
+write_rows(swaps, 'swaps.csv')
+write_rows(singles, 'singles.csv')
+
+"""
