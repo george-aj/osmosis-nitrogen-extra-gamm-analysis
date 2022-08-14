@@ -35,7 +35,7 @@ def parse_gamm_estimates():
             extra_amount_total = coin_amount_map.get(denom) or 0
             
             sender_amount = int(coin.get('amount'))            
-            amount_extra_issued = sender_amount - (sender_amount / adjustment_ratio)
+            amount_extra_issued = (sender_amount * adjustment_ratio) - sender_amount
             extra_amount_total += amount_extra_issued
             
             coin_amount_map.update({denom: extra_amount_total})
